@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <wayland-client.h>
 
 struct bar {
     const char* const version;
@@ -12,6 +13,8 @@ struct bar {
     const char* bg;
     const char* fg;
     const char* font;
+
+    struct wl_display* wl_display;
 };
 
 enum {
@@ -59,9 +62,12 @@ static void init(struct bar* bar)
     pipe_init(bar);
 
     fcft_init(FCFT_LOG_COLORIZE_AUTO, false, FCFT_LOG_CLASS_ERROR);
-    if (!(fcft_capabilities() & FCFT_CAPABILITY_TEXT_RUN_SHAPING)) {
+    if (!(fcft_capabilities() & FCFT_CAPABILITY_TEXT_RUN_SHAPING))
         quit(bar, INNER_ERROR, "fcft does not support text-run shaping.\n");
-    }
+
+    bar->wl_display = wl_display_connect(NULL);
+    if (bar->wl_display == NULL)
+        quit(bar, INNER_ERROR, "failed to connect to wayland display.\n");
 }
 
 int main(int argc, char** argv)
