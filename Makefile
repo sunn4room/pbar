@@ -3,6 +3,9 @@ all: pbar
 pbar: pbar.c protocols/*.h protocols/*.c
 	gcc -o pbar pbar.c protocols/*.c `pkg-config --libs --cflags wayland-client pixman-1 fcft`
 
+pbar-debug: pbar.c protocols/*.h protocols/*.c
+	gcc -g -o pbar-debug pbar.c protocols/*.c `pkg-config --libs --cflags wayland-client pixman-1 fcft`
+
 protocols/*.h: protocols/*.xml
 	wayland-scanner client-header protocols/xdg-shell-stable.xml protocols/xdg-shell.h
 	wayland-scanner client-header protocols/wlr-layer-shell-unstable-v1.xml protocols/wlr-layer-shell.h
