@@ -58,7 +58,7 @@ struct block;
 
 struct item {
     const char* value;
-    struct block* begin;
+    struct block* head;
 };
 
 enum {
@@ -73,8 +73,6 @@ enum {
     ITEM_ACT6,
     ITEM_ACT7,
     ITEM_SIZE,
-    SWAP_BG_FG,
-    PART_DELIMITER,
 };
 
 struct block {
@@ -133,7 +131,12 @@ struct bar {
     struct wl_array text_busy;
     struct wl_array codepoint;
 
-    uint32_t width, height, x, y, scale, time;
+    uint32_t width, height;
+    uint32_t x, y;
+    uint32_t scale;
+    char dpi[16];
+    uint32_t buf_width, buf_height;
+    uint32_t time;
     bool redraw;
 };
 
@@ -144,7 +147,7 @@ static void quit(struct bar* bar, const int code, const char* restrict fmt, ...)
         va_start(ap, fmt);
         vfprintf(stderr, fmt, ap);
         va_end(ap);
-        fprintf(stderr, "\n");
+        fputc('\n', stderr);
     }
 
     struct block* block;
@@ -271,44 +274,40 @@ static const struct wl_output_listener wl_output_listener = {
 
 static void print_action(struct block* block, int item_idx, uint32_t x)
 {
-    const char* action = block->item[item_idx].value;
-    const char* p = strstr(action, "{}");
-    if (p == NULL) {
-        fprintf(stdout, "%s\n", action);
-    } else {
-        float f = 0;
-        struct block* begin = block->item[item_idx].begin;
-        if (begin->run != NULL) f += begin->run->count;
-        if (begin != block) {
-            struct block* each;
-            wl_list_for_each_reverse(each, &begin->link, link)
-            {
-                if (each->run != NULL) f += each->run->count;
-                if (each == block) break;
+    float f = -1; // lazy load
+    for (const char* reader = block->item[item_idx].value; reader[0] != '\0'; reader += 1) {
+        if (reader[0] == '{' && reader[1] == '}') {
+            if (f < 0) {
+                struct block* head = block->item[item_idx].head;
+                if (head->run != NULL) f += head->run->count;
+                if (head != block) {
+                    struct block* each;
+                    wl_list_for_each_reverse(each, &head->link, link)
+                    {
+                        if (each->run != NULL) f += each->run->count;
+                        if (each == block) break;
+                    }
+                }
+                uint32_t x_width = x - block->x;
+                uint32_t width = block->width;
+                for (int i = block->run->count - 1; i >= 0; i--) {
+                    uint32_t glyph_width = block->run->glyphs[i]->advance.x;
+                    if (width - glyph_width > x_width) {
+                        width -= glyph_width;
+                        f -= 1;
+                    } else {
+                        f -= (width - x_width) * 1.0 / glyph_width;
+                        break;
+                    }
+                }
             }
+            fprintf(stdout, "%f", f);
+            reader += 1;
+        } else {
+            fputc(reader[0], stdout);
         }
-        uint32_t x_width = x - block->x;
-        uint32_t width = block->width;
-        for (int i = block->run->count - 1; i >= 0; i--) {
-            uint32_t glyph_width = block->run->glyphs[i]->advance.x;
-            if (width - glyph_width > x_width) {
-                width -= glyph_width;
-                f -= 1;
-            } else {
-                f -= (width - x_width) * 1.0 / glyph_width;
-                break;
-            }
-        }
-        for (const char* reader = action; reader[0] != '\0'; reader += 1) {
-            if (reader == p) {
-                fprintf(stdout, "%f", f);
-                reader += 1;
-            } else {
-                fputc(*reader, stdout);
-            }
-        }
-        fputc('\n', stdout);
     }
+    fputc('\n', stdout);
 }
 static void wl_pointer_handle_enter(void* data, struct wl_pointer* wl_pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
 {
@@ -341,8 +340,8 @@ static void wl_pointer_handle_button(void* data, struct wl_pointer* wl_pointer, 
         bar->time = time;
     }
 
-    uint32_t x = bar->x * bar->scale / 120;
-    uint32_t y = bar->y * bar->scale / 120;
+    uint32_t x = bar->x * bar->buf_width / bar->width;
+    uint32_t y = bar->y * bar->buf_height / bar->height;
     for (int part_idx = PART_LEFT; part_idx < PART_SIZE; part_idx++) {
         struct block* block;
         wl_list_for_each_reverse(block, &bar->part[part_idx], link)
@@ -375,8 +374,8 @@ static void wl_pointer_handle_axis(void* data, struct wl_pointer* wl_pointer, ui
         bar->time = time;
     }
 
-    uint32_t x = bar->x * bar->scale / 120;
-    uint32_t y = bar->y * bar->scale / 120;
+    uint32_t x = bar->x * bar->buf_width / bar->width;
+    uint32_t y = bar->y * bar->buf_height / bar->height;
     for (int part_idx = PART_LEFT; part_idx < PART_SIZE; part_idx++) {
         struct block* block;
         wl_list_for_each_reverse(block, &bar->part[part_idx], link)
@@ -513,19 +512,59 @@ static void pipe_init(struct bar* bar)
     fstat(STDIN_FILENO, &stdin_stat);
     if (!S_ISFIFO(stdin_stat.st_mode)) {
         quit(bar, NO_ERROR,
-            "pbar is a wayland statusbar that renders plain text from stdin and prints mouse event action to stdout.\n"
-            "pbar version: %s\n"
-            "pbar usage: producer | pbar [options] | consumer\n"
+            "pbar is a featherweight text-rendering wayland statusbar.\n"
+            "pbar recieves utf-8 sequence from STDIN and sends pointer event actions to STDOUT.\n"
+            "sequence between a pair of '\\x1f' will be escaped instead of being rendered directly.\n"
+            "\n"
+            "        version         %s\n"
+            "        usage           producer | pbar [options] | consumer\n"
             "\n"
             "options are:\n"
-            "        -B rrggbb[aa]   set default background color (000000ff)\n"
-            "        -F rrggbb[aa]   set default foreground color (ffffffff)\n"
-            "        -T font[:k=v]   set default font (monospace)\n"
+            "        -B color        set default background color (000000ff)\n"
+            "        -F color        set default foreground color (ffffffff)\n"
+            "        -T font         set default font (monospace)\n"
             "        -o output       set wayland output\n"
             "        -s seat         set wayland seat\n"
             "        -b              place the bar at the bottom\n"
             "        -g gap          set margin gap (0)\n"
-            "        -i interval     set mouse event throttle interval in ms (100)\n"
+            "        -i interval     set pointer event throttle interval in ms (100)\n"
+            "\n"
+            "escape sequence can be:\n"
+            "        Bcolor          set background color\n"
+            "        B               restore last background color\n"
+            "        Fcolor          set foreground color\n"
+            "        F               restore last foreground color\n"
+            "        Tfont           set font\n"
+            "        T               restore last font\n"
+            "        1action         set left button click action\n"
+            "        1               restore last left button click action\n"
+            "        2action         set middle button click action\n"
+            "        2               restore last middle button click action\n"
+            "        3action         set right button click action\n"
+            "        3               restore right button click action\n"
+            "        4action         set axis scroll down action\n"
+            "        4               restore last axis scroll down action\n"
+            "        5action         set axis scroll up action\n"
+            "        5               restore last axis scroll up action\n"
+            "        6action         set axis scroll left action\n"
+            "        6               restore last axis scroll left action\n"
+            "        7action         set axis scroll right action\n"
+            "        7               restore last axis scroll right action\n"
+            "        R               swap background color and foreground color\n"
+            "        D               delimiter between left/center and center/right part\n"
+            "\n"
+            "color can be:\n"
+            "        rrggbb          without alpha\n"
+            "        rrggbbaa        with alpha\n"
+            "\n"
+            "font can be: (see 'man fcft_from_name')\n"
+            "        name            font name\n"
+            "        name:k=v        with single attribute\n"
+            "        name:k=v:k=v    with multiple attributes\n"
+            "\n"
+            "action can be:\n"
+            "        xxx             anything except for '\\x1f'\n"
+            "        xxx {}          {} will be replaced with pointer x-coordinate\n"
             "\n",
             bar->version);
     }
@@ -546,15 +585,6 @@ static void init(struct bar* bar)
     if (bar->wl_display == NULL) {
         quit(bar, INNER_ERROR, "failed to connect to wayland display.");
     }
-
-    wl_list_init(&bar->wl_buffer_wrapper_busy);
-    wl_list_init(&bar->part[PART_LEFT]);
-    wl_list_init(&bar->part[PART_CENTER]);
-    wl_list_init(&bar->part[PART_RIGHT]);
-    wl_list_init(&bar->block);
-    wl_array_init(&bar->text);
-    wl_array_init(&bar->text_busy);
-    wl_array_init(&bar->codepoint);
 }
 
 static void setup(struct bar* bar)
@@ -619,78 +649,73 @@ static void parse(struct bar* bar)
     struct block block = default_block;
 
     const char* reader = bar->text.data;
-    for (bool ctrl = false; (void*)reader < bar->text.data + bar->text.size; ctrl = !ctrl, reader = reader + strlen(reader) + 1) {
-        if (ctrl) {
-            int item_idx;
-            switch (reader[0]) {
-            case 'B':
-                item_idx = ITEM_BG;
-                break;
-            case 'F':
-                item_idx = ITEM_FG;
-                break;
-            case 'T':
-                item_idx = ITEM_FONT;
-                break;
-            case '1':
-                item_idx = ITEM_ACT1;
-                break;
-            case '2':
-                item_idx = ITEM_ACT2;
-                break;
-            case '3':
-                item_idx = ITEM_ACT3;
-                break;
-            case '4':
-                item_idx = ITEM_ACT4;
-                break;
-            case '5':
-                item_idx = ITEM_ACT5;
-                break;
-            case '6':
-                item_idx = ITEM_ACT6;
-                break;
-            case '7':
-                item_idx = ITEM_ACT7;
-                break;
-            case 'R':
-                item_idx = SWAP_BG_FG;
-                break;
-            case 'D':
-                item_idx = PART_DELIMITER;
-                break;
-            default:
-                quit(bar, RUNTIME_ERROR, "Unkown control characters: '%s'.\n", reader);
-            }
-
-            if (item_idx < ITEM_SIZE) {
-                struct item* item = &block.item[item_idx];
-                if (reader[1] != '\0') {
-                    item->value = reader + 1;
-                    item->begin = &block;
-                } else {
-                    if (item->begin == NULL) {
-                        quit(bar, RUNTIME_ERROR, "control characters error.");
-                    } else {
-                        const struct block* pre = wl_container_of(item->begin->link.next, pre, link);
-                        if (&pre->link == &bar->part[part_idx]) {
-                            pre = &default_block;
-                        }
-                        item->value = pre->item[item_idx].value;
-                        item->begin = pre->item[item_idx].begin;
-                    }
-                }
-            } else if (item_idx == SWAP_BG_FG) {
+    for (bool escape = false; (void*)reader < bar->text.data + bar->text.size; escape = !escape, reader = reader + strlen(reader) + 1) {
+        if (escape) {
+            if (reader[0] == 'R') {
                 const char* tmp_color = block.item[ITEM_BG].value;
                 block.item[ITEM_BG].value = block.item[ITEM_FG].value;
                 block.item[ITEM_FG].value = tmp_color;
-                block.item[ITEM_BG].begin = &block;
-                block.item[ITEM_FG].begin = &block;
-            } else if (item_idx == PART_DELIMITER) {
+                block.item[ITEM_BG].head = &block;
+                block.item[ITEM_FG].head = &block;
+            } else if (reader[0] == 'D') {
                 if (++part_idx == PART_SIZE) {
                     quit(bar, RUNTIME_ERROR, "too many delimiters.");
                 }
                 block = default_block;
+            } else {
+                int item_idx;
+                switch (reader[0]) {
+                case 'B':
+                    item_idx = ITEM_BG;
+                    break;
+                case 'F':
+                    item_idx = ITEM_FG;
+                    break;
+                case 'T':
+                    item_idx = ITEM_FONT;
+                    break;
+                case '1':
+                    item_idx = ITEM_ACT1;
+                    break;
+                case '2':
+                    item_idx = ITEM_ACT2;
+                    break;
+                case '3':
+                    item_idx = ITEM_ACT3;
+                    break;
+                case '4':
+                    item_idx = ITEM_ACT4;
+                    break;
+                case '5':
+                    item_idx = ITEM_ACT5;
+                    break;
+                case '6':
+                    item_idx = ITEM_ACT6;
+                    break;
+                case '7':
+                    item_idx = ITEM_ACT7;
+                    break;
+                default:
+                    quit(bar, RUNTIME_ERROR, "Unkown escape characters: %s.\n", reader);
+                }
+
+                struct item* item = &block.item[item_idx];
+                if (reader[1] != '\0') {
+                    item->value = reader + 1;
+                    item->head = &block;
+                } else {
+                    if (item->head != NULL) {
+                        const struct block* pre = wl_container_of(item->head->link.next, pre, link);
+                        if (&pre->link == &bar->part[part_idx]) {
+                            pre = &default_block;
+                        }
+                        item->value = pre->item[item_idx].value;
+                        item->head = pre->item[item_idx].head;
+                    } else {
+                        item->value = default_block.item[item_idx].value;
+                        item->head = default_block.item[item_idx].head;
+                    }
+                }
             }
         } else {
             struct block* insert = wl_container_of(bar->block.prev, insert, link);
@@ -702,9 +727,9 @@ static void parse(struct bar* bar)
             *insert = block;
             insert->text = reader;
             for (int item_idx = ITEM_BG; item_idx < ITEM_SIZE; item_idx++) {
-                if (insert->item[item_idx].begin == &block) {
-                    insert->item[item_idx].begin = insert;
-                    block.item[item_idx].begin = insert;
+                if (insert->item[item_idx].head == &block) {
+                    insert->item[item_idx].head = insert;
+                    block.item[item_idx].head = insert;
                 }
             }
             wl_list_insert(&bar->part[part_idx], &insert->link);
@@ -761,11 +786,9 @@ static void wl_buffer_handle_release(void* data, struct wl_buffer* wl_buffer)
 {
     struct wl_buffer_wrapper* bw = data;
     struct bar* bar = bw->bar;
-    uint32_t width = bar->width * bar->scale / 120;
-    uint32_t height = bar->height * bar->scale / 120;
 
     wl_list_remove(&bw->link);
-    if (bar->wl_buffer_wrapper != NULL || (bw->height != height || bw->width != width)) {
+    if (bar->wl_buffer_wrapper != NULL || (bw->height != bar->buf_height || bw->width != bar->buf_width)) {
         wl_buffer_destroy(bw->wl_buffer);
         munmap(bw->mmapped, bw->width * bw->height * 4);
         free(bw);
@@ -780,37 +803,38 @@ static const struct wl_buffer_listener wl_buffer_listener = {
 
 static void prepare(struct bar* bar)
 {
-    uint32_t width = bar->width * bar->scale / 120;
-    uint32_t height = bar->height * bar->scale / 120;
+    sprintf(bar->dpi, "dpi=%u", 96 * bar->scale / 120);
+    bar->buf_width = bar->width * bar->scale / 120;
+    bar->buf_height = fcft_from_name(1, (const char*[]) { bar->font }, bar->dpi)->height;
 
     if (bar->wl_buffer_wrapper != NULL) {
         struct wl_buffer_wrapper* bw = bar->wl_buffer_wrapper;
-        if (bw->width != width || bw->height != height) {
+        if (bw->width != bar->buf_width || bw->height != bar->buf_height) {
             wl_buffer_destroy(bw->wl_buffer);
-            munmap(bw->mmapped, bw->width * bar->height * 4);
+            munmap(bw->mmapped, bw->width * bw->height * 4);
             free(bw);
             bar->wl_buffer_wrapper = NULL;
         }
     }
 
     if (bar->wl_buffer_wrapper == NULL) {
-        int fd = allocate_shm_file(width * height * 4);
+        int fd = allocate_shm_file(bar->buf_width * bar->buf_height * 4);
         if (fd == -1) {
-            quit(bar, INNER_ERROR, "Failed to allocate shared memory file.");
+            quit(bar, INNER_ERROR, "failed to allocate shared memory file.");
         }
-        void* mmapped = mmap(NULL, width * height * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        void* mmapped = mmap(NULL, bar->buf_width * bar->buf_height * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (mmapped == MAP_FAILED) {
             close(fd);
-            quit(bar, INNER_ERROR, "Failed to map shared memory file.");
+            quit(bar, INNER_ERROR, "failed to map shared memory file.");
         }
-        struct wl_shm_pool* pool = wl_shm_create_pool(bar->wl_shm, fd, width * height * 4);
-        struct wl_buffer* wl_buffer = wl_shm_pool_create_buffer(pool, 0, width, height, width * 4, WL_SHM_FORMAT_ARGB8888);
+        struct wl_shm_pool* pool = wl_shm_create_pool(bar->wl_shm, fd, bar->buf_width * bar->buf_height * 4);
+        struct wl_buffer* wl_buffer = wl_shm_pool_create_buffer(pool, 0, bar->buf_width, bar->buf_height, bar->buf_width * 4, WL_SHM_FORMAT_ARGB8888);
         wl_shm_pool_destroy(pool);
         close(fd);
 
         bar->wl_buffer_wrapper = calloc(1, sizeof(struct wl_buffer_wrapper));
-        bar->wl_buffer_wrapper->width = width;
-        bar->wl_buffer_wrapper->height = height;
+        bar->wl_buffer_wrapper->width = bar->buf_width;
+        bar->wl_buffer_wrapper->height = bar->buf_height;
         bar->wl_buffer_wrapper->mmapped = mmapped;
         bar->wl_buffer_wrapper->wl_buffer = wl_buffer;
         bar->wl_buffer_wrapper->bar = bar;
@@ -842,9 +866,6 @@ static void draw(struct bar* bar)
     struct wl_buffer_wrapper* bw = bar->wl_buffer_wrapper;
     pixman_image_t* canvas = pixman_image_create_bits(PIXMAN_a8r8g8b8, bw->width, bw->height, bw->mmapped, bw->width * 4);
 
-    char dpi[16];
-    sprintf(dpi, "dpi=%d", 96 * bar->scale / 120);
-
     pixman_box32_t bar_box = { 0, 0, bw->width, bw->height };
     pixman_color_t bar_bg = strtocolor(bar->bg);
     pixman_image_fill_boxes(PIXMAN_OP_SRC, canvas, &bar_bg, 1, &bar_box);
@@ -858,12 +879,7 @@ static void draw(struct bar* bar)
         {
             if (block->text[0] == '\0') continue;
 
-            struct fcft_font* block_font = fcft_from_name(1, (const char*[]) { block->item[ITEM_FONT].value }, dpi);
-            if (block_font->height > bw->height) {
-                pixman_image_unref(bar_fg_image);
-                pixman_image_unref(canvas);
-                quit(bar, RUNTIME_ERROR, "font is too big: %s.", block->item[ITEM_FONT].value);
-            }
+            struct fcft_font* block_font = fcft_from_name(1, (const char*[]) { block->item[ITEM_FONT].value }, bar->dpi);
             block->y = (bw->height - block_font->height) / 2;
             block->height = block_font->height;
             block->base = (block_font->height + block_font->descent + block_font->ascent) / 2 - (block_font->descent > 0 ? block_font->descent : 0);
@@ -992,7 +1008,7 @@ static void loop(struct bar* bar)
                 reader[0] = '\0';
                 x1f_count++;
                 if (x1f_count % 2 == 0 && reader[-1] == '\0') {
-                    quit(bar, RUNTIME_ERROR, "Empty is no allowed between a pair of 0x1f.");
+                    quit(bar, RUNTIME_ERROR, "empty is no allowed between a pair of \\x1f.");
                 }
             } else if (reader[0] == '\n') {
                 if (x1f_count % 2 == 0) {
@@ -1006,7 +1022,7 @@ static void loop(struct bar* bar)
 
                     parse(bar);
                 } else {
-                    quit(bar, RUNTIME_ERROR, "An odd number of 0x1f was found in stdin line.");
+                    quit(bar, RUNTIME_ERROR, "an odd number of \\x1f was found in stdin line.");
                 }
             }
         } else if (pfds[2].revents & POLLHUP) {
@@ -1022,7 +1038,7 @@ static void loop(struct bar* bar)
 int main(int argc, char** argv)
 {
     struct bar bar = {
-        .version = "0.2",
+        .version = "1.0",
         .bg = "000000ff",
         .fg = "ffffffff",
         .font = "monospace",
@@ -1032,6 +1048,15 @@ int main(int argc, char** argv)
         .gap = 0,
         .throttle = 100,
     };
+
+    wl_list_init(&bar.wl_buffer_wrapper_busy);
+    wl_list_init(&bar.part[PART_LEFT]);
+    wl_list_init(&bar.part[PART_CENTER]);
+    wl_list_init(&bar.part[PART_RIGHT]);
+    wl_list_init(&bar.block);
+    wl_array_init(&bar.text);
+    wl_array_init(&bar.text_busy);
+    wl_array_init(&bar.codepoint);
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-B") == 0) {
