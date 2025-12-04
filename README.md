@@ -8,6 +8,7 @@ A featherweight text-rendering wayland statusbar. `p` indicates that pbar works 
 - wayland
 - fcft
 - pixman
+- tllist
 
 ```sh
 make
