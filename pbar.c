@@ -2,6 +2,7 @@
 #include <fcft/fcft.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
+#include <math.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -58,7 +59,7 @@ struct block;
 
 struct item {
     const char* value;
-    struct block* head;
+    struct wl_list* last;
 };
 
 enum {
@@ -276,17 +277,14 @@ static void print_action(struct block* block, int item_idx, uint32_t x)
 {
     float f = -1; // lazy load
     for (const char* reader = block->item[item_idx].value; reader[0] != '\0'; reader += 1) {
-        if (reader[0] == '{' && reader[1] == '}') {
+        if ((reader[0] == '{' && reader[1] == '}') || (reader[0] == '[' && reader[1] == ']')) {
             if (f < 0) {
-                struct block* head = block->item[item_idx].head;
-                if (head->run != NULL) f += head->run->count;
-                if (head != block) {
-                    struct block* each;
-                    wl_list_for_each_reverse(each, &head->link, link)
-                    {
-                        if (each->run != NULL) f += each->run->count;
-                        if (each == block) break;
-                    }
+                f = 0;
+                struct block* each;
+                wl_list_for_each_reverse(each, block->item[item_idx].last, link)
+                {
+                    if (each->run != NULL) f += each->run->count;
+                    if (each == block) break;
                 }
                 uint32_t x_width = x - block->x;
                 uint32_t width = block->width;
@@ -301,7 +299,10 @@ static void print_action(struct block* block, int item_idx, uint32_t x)
                     }
                 }
             }
-            fprintf(stdout, "%f", f);
+            if (reader[0] == '{')
+                fprintf(stdout, "%f", f);
+            else
+                fprintf(stdout, "%d", (int)ceilf(f));
             reader += 1;
         } else {
             fputc(reader[0], stdout);
@@ -625,9 +626,9 @@ static void setup(struct bar* bar)
 
 static void parse(struct bar* bar)
 {
-    for (int i = 0; i < PART_SIZE; i++) {
+    for (int part_idx = 0; part_idx < PART_SIZE; part_idx++) {
         struct block *block, *tmp_block;
-        wl_list_for_each_reverse_safe(block, tmp_block, &bar->part[i], link)
+        wl_list_for_each_reverse_safe(block, tmp_block, &bar->part[part_idx], link)
         {
             wl_list_remove(&block->link);
             if (block->run != NULL) {
@@ -638,101 +639,102 @@ static void parse(struct bar* bar)
         }
     }
 
-    int part_idx = PART_LEFT;
-    const struct block default_block = {
-        .item = {
-            { .value = bar->bg },
-            { .value = bar->fg },
-            { .value = bar->font },
-        },
-    };
-    struct block block = default_block;
-
     const char* reader = bar->text.data;
-    for (bool escape = false; (void*)reader < bar->text.data + bar->text.size; escape = !escape, reader = reader + strlen(reader) + 1) {
-        if (escape) {
-            if (reader[0] == 'R') {
-                const char* tmp_color = block.item[ITEM_BG].value;
-                block.item[ITEM_BG].value = block.item[ITEM_FG].value;
-                block.item[ITEM_FG].value = tmp_color;
-                block.item[ITEM_BG].head = &block;
-                block.item[ITEM_FG].head = &block;
-            } else if (reader[0] == 'D') {
-                if (++part_idx == PART_SIZE) {
-                    quit(bar, RUNTIME_ERROR, "too many delimiters.");
-                }
-                block = default_block;
-            } else {
-                int item_idx;
-                switch (reader[0]) {
-                case 'B':
-                    item_idx = ITEM_BG;
-                    break;
-                case 'F':
-                    item_idx = ITEM_FG;
-                    break;
-                case 'T':
-                    item_idx = ITEM_FONT;
-                    break;
-                case '1':
-                    item_idx = ITEM_ACT1;
-                    break;
-                case '2':
-                    item_idx = ITEM_ACT2;
-                    break;
-                case '3':
-                    item_idx = ITEM_ACT3;
-                    break;
-                case '4':
-                    item_idx = ITEM_ACT4;
-                    break;
-                case '5':
-                    item_idx = ITEM_ACT5;
-                    break;
-                case '6':
-                    item_idx = ITEM_ACT6;
-                    break;
-                case '7':
-                    item_idx = ITEM_ACT7;
-                    break;
-                default:
-                    quit(bar, RUNTIME_ERROR, "Unkown escape characters: %s.\n", reader);
-                }
+    for (int part_idx = PART_LEFT; (void*)reader < bar->text.data + bar->text.size; part_idx++) {
+        if (part_idx == PART_SIZE) {
+            quit(bar, RUNTIME_ERROR, "too many delimiters.");
+        }
 
-                struct item* item = &block.item[item_idx];
-                if (reader[1] != '\0') {
-                    item->value = reader + 1;
-                    item->head = &block;
+        struct block block = {
+            .item = {
+                { .value = bar->bg, .last = &bar->part[part_idx] },
+                { .value = bar->fg, .last = &bar->part[part_idx] },
+                { .value = bar->font, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+                { .value = NULL, .last = &bar->part[part_idx] },
+            },
+        };
+
+        for (bool escape = false, delimiter = false;
+            !delimiter && (void*)reader < bar->text.data + bar->text.size;
+            escape = !escape, reader = reader + strlen(reader) + 1) {
+
+            if (!escape) {
+                struct block* insert_block = wl_container_of(bar->block.prev, insert_block, link);
+                if (&insert_block->link == &bar->block) {
+                    insert_block = calloc(1, sizeof(struct block));
                 } else {
-                    if (item->head != NULL) {
-                        const struct block* pre = wl_container_of(item->head->link.next, pre, link);
-                        if (&pre->link == &bar->part[part_idx]) {
-                            pre = &default_block;
-                        }
-                        item->value = pre->item[item_idx].value;
-                        item->head = pre->item[item_idx].head;
+                    wl_list_remove(&insert_block->link);
+                }
+                *insert_block = block;
+                insert_block->text = reader;
+                wl_list_insert(&bar->part[part_idx], &insert_block->link);
+            } else {
+                if (reader[0] == 'D') {
+                    delimiter = true;
+                } else if (reader[0] == 'R') {
+                    const char* tmp_color = block.item[ITEM_BG].value;
+                    block.item[ITEM_BG].value = block.item[ITEM_FG].value;
+                    block.item[ITEM_FG].value = tmp_color;
+                    block.item[ITEM_BG].last = bar->part[part_idx].next;
+                    block.item[ITEM_FG].last = bar->part[part_idx].next;
+                } else {
+                    int item_idx;
+                    switch (reader[0]) {
+                    case 'B':
+                        item_idx = ITEM_BG;
+                        break;
+                    case 'F':
+                        item_idx = ITEM_FG;
+                        break;
+                    case 'T':
+                        item_idx = ITEM_FONT;
+                        break;
+                    case '1':
+                        item_idx = ITEM_ACT1;
+                        break;
+                    case '2':
+                        item_idx = ITEM_ACT2;
+                        break;
+                    case '3':
+                        item_idx = ITEM_ACT3;
+                        break;
+                    case '4':
+                        item_idx = ITEM_ACT4;
+                        break;
+                    case '5':
+                        item_idx = ITEM_ACT5;
+                        break;
+                    case '6':
+                        item_idx = ITEM_ACT6;
+                        break;
+                    case '7':
+                        item_idx = ITEM_ACT7;
+                        break;
+                    default:
+                        quit(bar, RUNTIME_ERROR, "Unkown escape characters: %s.\n", reader);
+                    }
+                    struct item* item = &block.item[item_idx];
+
+                    if (reader[1] != '\0') {
+                        item->value = reader + 1;
+                        item->last = bar->part[part_idx].next;
                     } else {
-                        item->value = default_block.item[item_idx].value;
-                        item->head = default_block.item[item_idx].head;
+                        if (item->last != &bar->part[part_idx]) {
+                            const struct block* last_block = wl_container_of(item->last, last_block, link);
+                            item->value = last_block->item[item_idx].value;
+                            item->last = last_block->item[item_idx].last;
+                        } else {
+                            quit(bar, RUNTIME_ERROR, "redundant restore operation: %s.", reader);
+                        }
                     }
                 }
             }
-        } else {
-            struct block* insert = wl_container_of(bar->block.prev, insert, link);
-            if (&insert->link == &bar->block) {
-                insert = calloc(1, sizeof(struct block));
-            } else {
-                wl_list_remove(&insert->link);
-            }
-            *insert = block;
-            insert->text = reader;
-            for (int item_idx = ITEM_BG; item_idx < ITEM_SIZE; item_idx++) {
-                if (insert->item[item_idx].head == &block) {
-                    insert->item[item_idx].head = insert;
-                    block.item[item_idx].head = insert;
-                }
-            }
-            wl_list_insert(&bar->part[part_idx], &insert->link);
         }
     }
 
