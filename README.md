@@ -1,5 +1,7 @@
 # pbar
 
+![](pbar.png)
+
 A featherweight text-rendering wayland statusbar. `p` indicates that pbar works with anonymous pipe `|`. This bar is highly customizable and extensible.
 
 ## build
