@@ -19,57 +19,64 @@ make
 ## usage
 
 ```
-pbar is a featherweight text-rendering wayland statusbar.
-pbar renders utf-8 sequence from STDIN and prints pointer event actions to STDOUT.
-sequence between a pair of '\x1f' will be escaped instead of being rendered directly.
 
-        version         2.0
+Pbar is a featherweight text-rendering wayland statusbar.
+It renders utf-8 sequence from STDIN line by line.
+It prints mouse pointer event actions to STDOUT.
+
+        version         3.0
         usage           producer | pbar [options] | consumer
 
-options are:
-        -c color,color  set colors list (000000ff,ffffffff)
-        -f font,font    set fonts list (monospace)
-        -o output       set wayland output
-        -s seat         set wayland seat
+Options are:
+        -c color,...    set colors list (000000ff,ffffffff)
+        -f font,...     set fonts list (monospace)
+        -o output,...   set wayland outputs list
+        -s seat,...     set wayland seats list
         -b              place the bar at the bottom
         -g gap          set margin gap (0)
         -i interval     set pointer event throttle interval in ms (100)
-        -r rep_str      set the replace string for action ({})
 
-color can be:
-        rrggbb          without alpha
-        rrggbbaa        with alpha
+color can be: (support 0/1/2/3/4/6/8 hex numbers)
+        <empty>         -> 000000ff
+        g               -> ggggggff
+        ga              -> ggggggaa
+        rgb             -> rrggbbff
+        rgba            -> rrggbbaa
+        rrggbb          -> rrggbbff
+        rrggbbaa        -> rrggbbaa
 
-font can be: (see 'man fcft_from_name')
+font can be: (see 'man fcft_from_name' 'man fonts-conf')
         name            font name
         name:k=v        with single attribute
         name:k=v:k=v    with multiple attributes
 
-environment variable:
-        PBAR_COLORS     set colors list
-        PBAR_FONTS      set fonts list
+output/seat can be: (see 'wayland-info')
+        name            output/seat name
 
-escape sequence can be:
-        Bindex          set background color index
-        B               restore last background color index
-        Findex          set foreground color index
-        F               restore last foreground color index
-        Tindex          set font index
-        T               restore last font index
-        1action         set left button click action
-        1               restore last left button click action
-        2action         set middle button click action
-        2               restore last middle button click action
-        3action         set right button click action
-        3               restore right button click action
-        4action         set axis scroll down action
-        4               restore last axis scroll down action
-        5action         set axis scroll up action
-        5               restore last axis scroll up action
-        6action         set axis scroll left action
-        6               restore last axis scroll left action
-        7action         set axis scroll right action
-        7               restore last axis scroll right action
+Sequence between a pair of '\x1f' will be escaped instead of being rendered directly.
+Valid escape sequences are:
+        Bindex          set background color index (initially 0)
+        B               restore to last background color index
+        Findex          set foreground color index (initially 1)
+        F               restore to last foreground color index
+        Tindex          set font index (initially 0)
+        T               restore to last font index
+        Ooutput         set exclusive wayland output (initially NULL)
+        O               restore to last wayland output
+        1action         set left button click action (initially NULL)
+        1               restore to last left button click action
+        2action         set middle button click action (initially NULL)
+        2               restore to last middle button click action
+        3action         set right button click action (initially NULL)
+        3               restore to last right button click action
+        4action         set axis scroll down action (initially NULL)
+        4               restore to last axis scroll down action
+        5action         set axis scroll up action (initially NULL)
+        5               restore to last axis scroll up action
+        6action         set axis scroll left action (initially NULL)
+        6               restore to last axis scroll left action
+        7action         set axis scroll right action (initially NULL)
+        7               restore to last axis scroll right action
         R               swap background color and foreground color
         D               delimiter between left/center and center/right part
 
@@ -80,7 +87,6 @@ index can be:
 
 action can be:
         xxx             anything except for '\x1f'
-        xxx rep_str     rep_str will be replaced with pointer x-coordinate
 ```
 
 ## example
