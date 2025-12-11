@@ -37,7 +37,7 @@ Options are:
         -i interval     set pointer event throttle interval in ms (100)
 
 color can be: (support 0/1/2/3/4/6/8 hex numbers)
-        <empty>         -> 000000ff
+        <empty>         -> 00000000
         g               -> ggggggff
         ga              -> ggggggaa
         rgb             -> rrggbbff

@@ -763,7 +763,7 @@ static void set_pipe()
             "        -i interval     set pointer event throttle interval in ms (100)\n"
             "\n"
             "color can be: (support 0/1/2/3/4/6/8 hex numbers)\n"
-            "        <empty>         -> 000000ff\n"
+            "        <empty>         -> 00000000\n"
             "        g               -> ggggggff\n"
             "        ga              -> ggggggaa\n"
             "        rgb             -> rrggbbff\n"
