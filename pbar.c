@@ -454,7 +454,12 @@ static void zwlr_layer_surface_handle_configure(void* data, struct zwlr_layer_su
     bar->redraw = true;
 }
 
-static void zwlr_layer_surface_handle_closed(void* data, struct zwlr_layer_surface_v1* zwlr_layer_surface_v1) { }
+static void zwlr_layer_surface_handle_closed(void* data, struct zwlr_layer_surface_v1* zwlr_layer_surface_v1)
+{
+    struct bar* bar = data;
+    bar_destroy(bar);
+}
+
 static const struct zwlr_layer_surface_v1_listener zwlr_layer_surface_listener = {
     .configure = zwlr_layer_surface_handle_configure,
     .closed = zwlr_layer_surface_handle_closed,
@@ -1144,7 +1149,7 @@ static void init(int argc, char** argv)
 {
     pbar_init();
 
-    pbar.version = "3.0";
+    pbar.version = "3.1";
 
     pbar.colors = default_colors;
     pbar.fonts = default_fonts;
