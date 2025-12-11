@@ -1039,15 +1039,17 @@ static void draw(struct bar* bar)
                 if ((reader[0] & 0b10000000) == 0b00000000) {
                     *codepoint = reader[0];
                     reader += 1;
-                } else if ((reader[0] & 0b11100000) == 0b11000000) {
+                } else if ((reader[0] & 0b11100000) == 0b11000000 && (reader[1] & 0b11000000) == 0b10000000) {
                     *codepoint = ((reader[0] & 0b11111) << 6) | (reader[1] & 0b111111);
                     reader += 2;
-                } else if ((reader[0] & 0b11110000) == 0b11100000) {
+                } else if ((reader[0] & 0b11110000) == 0b11100000 && (reader[1] & 0b11000000) == 0b10000000 && (reader[2] & 0b11000000) == 0b10000000) {
                     *codepoint = ((reader[0] & 0b1111) << 12) | ((reader[1] & 0b111111) << 6) | (reader[2] & 0b111111);
                     reader += 3;
-                } else {
+                } else if ((reader[0] & 0b11111000) == 0b11110000 && (reader[1] & 0b11000000) == 0b10000000 && (reader[2] & 0b11000000) == 0b10000000 && (reader[3] & 0b11000000) == 0b10000000) {
                     *codepoint = ((reader[0] & 0b111) << 18) | ((reader[1] & 0b111111) << 12) | ((reader[2] & 0b111111) << 6) | (reader[3] & 0b111111);
                     reader += 4;
+                } else {
+                    msg(RUNTIME_ERROR, "invalid utf-8 character sequence.");
                 }
             }
             block->run = fcft_rasterize_text_run_utf32(block->font, pbar.codepoint.size / 4, pbar.codepoint.data, FCFT_SUBPIXEL_DEFAULT);
@@ -1149,7 +1151,7 @@ static void init(int argc, char** argv)
 {
     pbar_init();
 
-    pbar.version = "3.1";
+    pbar.version = "3.2";
 
     pbar.colors = default_colors;
     pbar.fonts = default_fonts;
