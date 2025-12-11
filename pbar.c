@@ -1001,7 +1001,7 @@ static void draw(struct bar* bar)
                 if (each->item[ITEM_OUTPUT].value == NULL) continue;
             }
 
-            block = wl_container_of(&bar->part[PART_SIZE].prev, block, link);
+            block = wl_container_of(bar->part[PART_SIZE].prev, block, link);
             if (&block->link == &bar->part[PART_SIZE]) {
                 block = block_new(bar);
             }
