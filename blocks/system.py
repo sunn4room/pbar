@@ -29,4 +29,4 @@ while True:
     cpu_usage = psutil.cpu_percent()
     cpu_str = f"\x1fB9\x1f\x1fF4\x1f\x1fT3\x1f  \x1fT\x1f\x1fB\x1f\x1fF\x1f\x1fB4\x1f\x1fF1\x1f{cpu_usage:3.0f}% \x1fB\x1f\x1fF\x1f"
 
-    print(f"\x1fT2\x1f {io_str} {mem_str} {cpu_str} \x1fT\x1f", flush=True)
+    print(f"\x1fT2\x1f {io_str}  {mem_str}  {cpu_str} \x1fT\x1f", flush=True)
